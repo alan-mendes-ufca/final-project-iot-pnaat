@@ -1,0 +1,37 @@
+menu "Detector de gestos"
+
+choice GESTURE_APP_MODE
+    prompt "Modo da aplicacao"
+    default GESTURE_MODE_COLLECT
+    help
+        Os dois modos compartilham o mesmo caminho de aquisicao (BNO085 ->
+        accel+gyro a 50 Hz); muda so o que e feito com cada amostra.
+
+config GESTURE_MODE_COLLECT
+    bool "Coleta -- stream CSV para o edge-impulse-data-forwarder"
+    help
+        Imprime "ax,ay,az,gx,gy,gz" no UART, uma linha por amostra, e
+        silencia todo o resto do log para nao sujar o stream. O OLED nao
+        e inicializado. Use com:
+
+            edge-impulse-data-forwarder --frequency 50
+
+config GESTURE_MODE_INFER
+    bool "Inferencia -- classifica e mostra o gesto no OLED"
+    help
+        Roda o modelo do Edge Impulse sobre uma janela deslizante e mostra
+        o gesto detectado no OLED. Enquanto o modelo nao estiver integrado
+        (Fase 5), mostra os modulos de accel/gyro e a taxa efetiva -- serve
+        para validar montagem do sensor e o caminho ate o display.
+
+endchoice
+
+config GESTURE_SAMPLE_RATE_HZ
+    int "Taxa de amostragem (Hz)"
+    default 50
+    range 10 200
+    help
+        Precisa bater com a "frequency" configurada no impulse do Edge
+        Impulse. Mudar aqui depois de treinar invalida o modelo.
+
+endmenu

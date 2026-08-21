@@ -1,0 +1,6 @@
+dependencies:
+  idf:
+    version: ">=4.1.0"
+  eil/esp_idf_lib_helpers: ^1.2.1
+  lvgl/lvgl: "9.2.0"
+  espressif/esp_lvgl_port: ~2.7.0

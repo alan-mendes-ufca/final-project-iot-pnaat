@@ -1,0 +1,9 @@
+# Tabela de particoes -- Heltec WiFi LoRa 32 V3 (ESP32-S3FN8, 8 MB de flash).
+#
+# O SDK do Edge Impulse (TFLite Micro + ESP-NN + esp-dsp) somado a LVGL nao cabe
+# na particao factory de 1 MB do layout "single app" padrao do ESP-IDF.
+#
+# Name,   Type, SubType, Offset,  Size
+nvs,      data, nvs,     0x9000,  24K
+phy_init, data, phy,     0xf000,  4K
+factory,  app,  factory, 0x10000, 3M

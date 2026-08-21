@@ -1,0 +1,27 @@
+# Configuracao minima do projeto -- gerada com `idf.py save-defconfig` e ajustada
+# a mao para o pipeline de reconhecimento de gestos (Edge Impulse + BNO085).
+#
+# Regenerar o sdkconfig completo:  rm sdkconfig && idf.py reconfigure
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Flash e particoes -------------------------------------------------------
+# A placa e uma Heltec WiFi LoRa 32 V3 (ESP32-S3FN8) com 8 MB, mas o projeto
+# estava configurado para 2 MB + single-app (factory de 1 MB). O SDK do Edge
+# Impulse nao cabe nisso.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- Tempo real --------------------------------------------------------------
+# Tick de 1 ms: a 100 Hz (10 ms) nao ha folga para drenar o SHTP acima da taxa
+# de report combinada de accel+gyro (100 reports/s).
+CONFIG_FREERTOS_HZ=1000
+
+# --- Desempenho --------------------------------------------------------------
+# 240 MHz e -O2 para a inferencia TFLite Micro caber no orcamento de 100 ms.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# --- Herdado da configuracao anterior ----------------------------------------
+CONFIG_LWIP_DHCP_OPTIONS_LEN=69

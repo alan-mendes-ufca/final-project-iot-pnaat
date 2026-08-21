@@ -1,0 +1,50 @@
+# ESP-IDF build output
+build/
+sdkconfig.old
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# ESP-IDF generated files
+dependencies.lock
+managed_components/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# VS Code ESP-IDF extension
+.vscode/settings.json
+.vscode/launch.json
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Optional: local environment/configuration files
+.env
+.env.local

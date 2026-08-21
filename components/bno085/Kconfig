@@ -1,0 +1,59 @@
+menu "BNO085"
+
+    config BNO085_I2C_ADDR
+        hex "Endereco I2C do BNO085"
+        default 0x4A
+        help
+            0x4A quando o pino ADR do sensor esta em GND (padrao da
+            maioria dos breakouts). 0x4B quando ADR esta em 3V3.
+
+    config BNO085_I2C_PORT
+        int "Numero da porta I2C do BNO085 (I2C_NUM_x)"
+        default 1
+        help
+            Na Heltec WiFi LoRa 32 V3, I2C_NUM_0 ja e usado pelo OLED
+            onboard (components/i2c_config, SDA=17/SCL=18 -- barramento
+            interno, sem saida no header). O BNO085 precisa do SEU
+            PROPRIO barramento: I2C_NUM_1 (default), livre.
+
+            Esse componente (bno085) NAO inicializa I2C sozinho -- este
+            valor, junto com BNO085_SDA_GPIO/SCL_GPIO abaixo, e pra
+            passar pra components/i2c_config::initialize_i2c() no
+            call-site (ver README, secao "Modularidade") antes de
+            chamar bno085_init().
+
+    config BNO085_SDA_GPIO
+        int "GPIO do pino SDA do BNO085"
+        default 6
+        help
+            Pino a passar pra i2c_config::initialize_i2c() na porta de
+            BNO085_I2C_PORT. O OLED da Heltec V3 (17/18) e interno --
+            nao sai no header, entao o BNO085 nao pode usar esses
+            pinos. GPIO 4/5/6/7 sao os que a Heltec recomenda
+            oficialmente pra uso externo e ficam num bloco contiguo
+            facil de cabear.
+
+    config BNO085_SCL_GPIO
+        int "GPIO do pino SCL do BNO085"
+        default 7
+        help
+            Ver ajuda de BNO085_SDA_GPIO.
+
+    config BNO085_RESET_GPIO
+        int "GPIO do pino RESET do BNO085"
+        default 4
+        help
+            Pino ativo-baixo usado para reset de hardware do sensor.
+            Defaults calibrados pra Heltec WiFi LoRa 32 V3: essa placa ja
+            usa GPIO 0 (botao PRG), 1/37 (bateria), 8-14 (radio LoRa),
+            17/18/21 (OLED onboard), 19/20 (USB nativo), 35 (LED) e 36
+            (Vext) -- nao reuse esses pinos aqui.
+
+    config BNO085_INT_GPIO
+        int "GPIO do pino INT do BNO085"
+        default 5
+        help
+            Pino ativo-baixo usado pelo sensor para sinalizar dado
+            pronto. Mesmas restricoes de pino do RESET acima.
+
+endmenu
