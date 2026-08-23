@@ -19,19 +19,19 @@ config GESTURE_MODE_COLLECT
 config GESTURE_MODE_INFER
     bool "Inferencia -- classifica e mostra o gesto no OLED"
     help
-        Roda o modelo do Edge Impulse sobre uma janela deslizante e mostra
-        o gesto detectado no OLED. Enquanto o modelo nao estiver integrado
-        (Fase 5), mostra os modulos de accel/gyro e a taxa efetiva -- serve
-        para validar montagem do sensor e o caminho ate o display.
+        Roda o modelo do Edge Impulse sobre uma janela deslizante de 100
+        amostras e mostra no OLED o gesto detectado e a confianca. Resultados
+        abaixo do limiar configurado no modelo sao exibidos como "incerto".
 
 endchoice
 
 config GESTURE_SAMPLE_RATE_HZ
-    int "Taxa de amostragem (Hz)"
+    int "Taxa de amostragem (Hz)" if GESTURE_MODE_COLLECT
     default 50
     range 10 200
     help
-        Precisa bater com a "frequency" configurada no impulse do Edge
-        Impulse. Mudar aqui depois de treinar invalida o modelo.
+        No modo de coleta esta taxa pode ser ajustada antes de treinar um novo
+        modelo. No modo de inferencia ela fica oculta e fixada em 50 Hz, pois
+        precisa coincidir com a frequencia do modelo exportado.
 
 endmenu

@@ -9,12 +9,13 @@
  *   INFER   -- classifica a janela deslizante e mostra o gesto no OLED.
  */
 #include <inttypes.h>
-#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
@@ -23,6 +24,7 @@
 #include "imu_config.h"
 
 #if CONFIG_GESTURE_MODE_INFER
+#include "gesture_classifier.h"
 #include "oled_printf.h"
 #include "oled_setup.h"
 #endif
@@ -47,22 +49,124 @@ static void collect_sample_cb(const float *sample, void *ctx)
 
 #else /* CONFIG_GESTURE_MODE_INFER */
 
-/*
- * Enquanto o modelo do Edge Impulse nao estiver integrado (Fase 5), o modo de
- * inferencia mostra os modulos de accel/gyro e a taxa efetiva. Isso ja valida
- * na pratica o que a coleta depende: sensor preso na orientacao certa,
- * reportando, e na taxa configurada.
- */
-static volatile float s_accel_mag;
-static volatile float s_gyro_mag;
+#define INFERENCE_QUEUE_DEPTH      2
+#define INFERENCE_TASK_STACK_BYTES (16 * 1024)
+#define INFERENCE_TASK_PRIORITY    4
+
+typedef struct {
+    uint32_t sequence;
+    float values[GESTURE_CLASSIFIER_VALUES_PER_SLICE];
+} gesture_slice_t;
+
+static QueueHandle_t s_inference_queue;
+static TaskHandle_t s_inference_task;
+static gesture_slice_t s_pending_slice;
+static size_t s_pending_sample_count;
+static uint32_t s_next_sequence;
+static volatile uint32_t s_dropped_slices;
 
 static void infer_sample_cb(const float *sample, void *ctx)
 {
     (void)ctx;
-    s_accel_mag = sqrtf(sample[0] * sample[0] + sample[1] * sample[1] +
-                        sample[2] * sample[2]);
-    s_gyro_mag = sqrtf(sample[3] * sample[3] + sample[4] * sample[4] +
-                       sample[5] * sample[5]);
+
+    const size_t offset = s_pending_sample_count * GESTURE_CLASSIFIER_AXES;
+    memcpy(&s_pending_slice.values[offset], sample,
+           GESTURE_CLASSIFIER_AXES * sizeof(float));
+    s_pending_sample_count++;
+
+    if (s_pending_sample_count == GESTURE_CLASSIFIER_SAMPLES_PER_SLICE) {
+        s_pending_slice.sequence = s_next_sequence++;
+        if (xQueueSend(s_inference_queue, &s_pending_slice, 0) != pdPASS) {
+            s_dropped_slices++;
+        }
+        s_pending_sample_count = 0;
+    }
+}
+
+static void log_classifier_result(uint32_t sequence,
+                                  const gesture_classifier_result_t *result)
+{
+    ESP_LOGI(TAG,
+             "seq=%" PRIu32 " guard=%.3f handshake=%.3f idle=%.3f "
+             "typing=%.3f wave=%.3f vencedor=%s conf=%.1f%% "
+             "DSP=%" PRIu64 "us NN=%" PRIu64 "us pos=%" PRIu64 "us",
+             sequence,
+             (double)result->probabilities[0],
+             (double)result->probabilities[1],
+             (double)result->probabilities[2],
+             (double)result->probabilities[3],
+             (double)result->probabilities[4],
+             gesture_classifier_label(result->best_class),
+             (double)(result->confidence * 100.0f),
+             result->dsp_us,
+             result->classification_us,
+             result->postprocessing_us);
+}
+
+static void inference_task(void *arg)
+{
+    (void)arg;
+
+    gesture_slice_t slice;
+    uint32_t previous_sequence = 0;
+    uint32_t consecutive_slices = 0;
+    uint32_t reported_dropped_slices = 0;
+    bool has_previous = false;
+
+    for (;;) {
+        if (xQueueReceive(s_inference_queue, &slice, portMAX_DELAY) != pdPASS) {
+            continue;
+        }
+
+        if (has_previous && slice.sequence != previous_sequence + 1U) {
+            const uint32_t missing = slice.sequence - previous_sequence - 1U;
+            ESP_LOGW(TAG,
+                     "Descontinuidade: %" PRIu32 " fatia(s) perdida(s), "
+                     "reiniciando janela",
+                     missing);
+            gesture_classifier_reset();
+            consecutive_slices = 0;
+        }
+
+        previous_sequence = slice.sequence;
+        has_previous = true;
+
+        gesture_classifier_result_t result;
+        const int error = gesture_classifier_run_slice(
+            slice.values, GESTURE_CLASSIFIER_VALUES_PER_SLICE, &result);
+        if (error != GESTURE_CLASSIFIER_OK) {
+            ESP_LOGE(TAG, "Falha na inferencia (codigo %d)", error);
+            gesture_classifier_reset();
+            consecutive_slices = 0;
+            printf_oled("erro de\ninferencia");
+            continue;
+        }
+
+        if (consecutive_slices < GESTURE_CLASSIFIER_SLICES_PER_WINDOW) {
+            consecutive_slices++;
+        }
+
+        if (!result.ready) {
+            printf_oled("Coletando janela\n%" PRIu32 "/%u",
+                        consecutive_slices,
+                        GESTURE_CLASSIFIER_SLICES_PER_WINDOW);
+            continue;
+        }
+
+        const char *display_label = result.accepted
+                                        ? gesture_classifier_label(result.best_class)
+                                        : "incerto";
+        printf_oled("%s\nconf: %.0f%%", display_label,
+                    (double)(result.confidence * 100.0f));
+        log_classifier_result(slice.sequence, &result);
+
+        const uint32_t dropped = s_dropped_slices;
+        if (dropped != reported_dropped_slices) {
+            ESP_LOGW(TAG, "Total de fatias descartadas pela fila: %" PRIu32,
+                     dropped);
+            reported_dropped_slices = dropped;
+        }
+    }
 }
 
 #endif
@@ -91,6 +195,35 @@ void app_main(void)
     initialize_i2c(&oled_port, PIN_NUM_SDA, PIN_NUM_SCL); /* barramento do OLED */
     configure_oled_screen(&oled_port);
     oled_printf_init(local_disp);
+
+    s_inference_queue = xQueueCreate(INFERENCE_QUEUE_DEPTH,
+                                     sizeof(gesture_slice_t));
+    if (s_inference_queue == NULL) {
+        ESP_LOGE(TAG, "Nao foi possivel criar a fila de inferencia");
+        printf_oled("erro: fila");
+        return;
+    }
+
+    const int classifier_error = gesture_classifier_init();
+    if (classifier_error != GESTURE_CLASSIFIER_OK) {
+        ESP_LOGE(TAG, "Nao foi possivel inicializar o classificador: %d",
+                 classifier_error);
+        vQueueDelete(s_inference_queue);
+        s_inference_queue = NULL;
+        printf_oled("erro: modelo");
+        return;
+    }
+
+    if (xTaskCreate(inference_task, "gesture_infer",
+                    INFERENCE_TASK_STACK_BYTES, NULL,
+                    INFERENCE_TASK_PRIORITY, &s_inference_task) != pdPASS) {
+        ESP_LOGE(TAG, "Nao foi possivel criar a task de inferencia");
+        gesture_classifier_deinit();
+        vQueueDelete(s_inference_queue);
+        s_inference_queue = NULL;
+        printf_oled("erro: task");
+        return;
+    }
 #endif
 
     /* A IMU sobe o proprio barramento (I2C_NUM_1), ver imu_config.c. */
@@ -101,6 +234,13 @@ void app_main(void)
 #endif
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Falha inicializando a IMU: %s", esp_err_to_name(err));
+#if CONFIG_GESTURE_MODE_INFER
+        vTaskDelete(s_inference_task);
+        s_inference_task = NULL;
+        gesture_classifier_deinit();
+        vQueueDelete(s_inference_queue);
+        s_inference_queue = NULL;
+#endif
         return;
     }
 
@@ -108,20 +248,7 @@ void app_main(void)
     /* Nada a fazer: a task de amostragem imprime sozinha. */
     vTaskSuspend(NULL);
 #else
-    ESP_LOGI(TAG, "Entrando no loop principal...");
-
-    uint32_t last_count = 0;
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        uint32_t count = imu_config_sample_count();
-        uint32_t rate = count - last_count;
-        last_count = count;
-
-        printf_oled("acc=%.1f\ngyr=%.2f\n%" PRIu32 " Hz\n",
-                    (double)s_accel_mag, (double)s_gyro_mag, rate);
-        ESP_LOGI(TAG, "|accel|=%.2f m/s2  |gyro|=%.2f rad/s  taxa=%" PRIu32 " Hz",
-                 (double)s_accel_mag, (double)s_gyro_mag, rate);
-    }
+    ESP_LOGI(TAG, "Classificador iniciado; aguardando a primeira janela");
+    vTaskSuspend(NULL);
 #endif
 }
